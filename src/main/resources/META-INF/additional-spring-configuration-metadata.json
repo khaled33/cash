@@ -1,0 +1,9 @@
+{
+  "properties": [
+    {
+      "name": "url.t24",
+      "type": "java.lang.String",
+      "description": "Description for url.t24."
+    }
+  ]
+}

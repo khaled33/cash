@@ -1,0 +1,158 @@
+---
+variables:
+  PACKAGE_VERSION: "0.1"
+  GENERIC_WAR: "endaCash-${PACKAGE_VERSION}.war"
+  PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${CI_PROJECT_NAME}/${PACKAGE_VERSION}"
+  VERSION: "0.1"
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: always
+      variables:
+        SERVER: "10.1.12.105"
+
+    - if: $CI_COMMIT_BRANCH == "dev"
+      when: always
+      variables:
+        SERVER: "10.1.19.23"
+        urlT24: "http://10.1.19.122:8080/ENDACASH/"
+        fileUploadDir: "/usr/share/nginx/html/endacashweb/images"
+        baseUrlImage: "https://endacashweb-dev.endatamweel.tn/images/"
+
+
+stages:
+  - build
+  - upload
+  - prepare
+  - release
+  - deploy
+
+build-application:
+  stage: build
+  image: registry.endatamweel.tn/maven:3.6.3-openjdk-17-slim
+  before_script:
+    - >
+      sed -i "s@__urlT24__@$urlT24@g"
+      src/main/resources/application.properties
+    - >
+      sed -i "s@__fileUploadDir__@$fileUploadDir@g"
+      src/main/resources/application.properties
+    - >
+      sed -i "s@__baseUrlImage__@$baseUrlImage@g"
+      src/main/resources/application.properties
+    - >
+      sed -i "s/__dbUser__/$dbUser/g"
+      src/main/resources/application.properties
+    - >
+      sed -i "s/__dbPassword__/$dbPassword/g"
+      src/main/resources/application.properties
+  script:
+    - mvn clean package -U -DskipTests=true
+    - echo $CI_COMMIT_TAG
+  artifacts:
+    expire_in: 2h
+    when: always
+    paths:
+      - target/*.war
+
+upload:
+  stage: upload
+  image: registry.endatamweel.tn/curl:latest
+  needs:
+    - job: build-application
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - |
+      curl -k --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file target/*.war "${PACKAGE_REGISTRY_URL}/${GENERIC_WAR}"
+
+prepare_job:
+  stage: prepare # This stage must run before the release stage
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never # Do not run this job when a tag is created manually
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # Run this job when commits are pushed or merged to the default branch
+  script:
+    - echo "EXTRA_DESCRIPTION=EndaCash Backend package version ${VERSION}" >> variables.env  # Generate the EXTRA_DESCRIPTION and TAG environment variables
+    - echo "TAG=v${VERSION}" >> variables.env             # and append to the variables.env file
+  artifacts:
+    reports:
+      dotenv: variables.env
+
+release:
+  # Caution, as of 2021-02-02 these assets links require a login, see:
+  # https://gitlab.com/gitlab-org/gitlab/-/issues/299384
+  stage: release
+  image: registry.endatamweel.tn/release-cli:latest
+  needs:
+    - job: prepare_job
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never # Do not run this job when a tag is created manually
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # Run this job when commits are pushed or merged to the default branch
+  script:
+    - |
+      release-cli create --name "Release $TAG" --tag-name $TAG --ref $CI_COMMIT_SHA \
+        --assets-link "{\"name\":\"${GENERIC_WAR}\",\"url\":\"${PACKAGE_REGISTRY_URL}/${GENERIC_WAR}\", \"link_type\":\"package\"}"
+
+# release:
+#   stage: release
+#   image: registry.gitlab.com/gitlab-org/release-cli:latest
+#   name: "Release $TAG"
+#   description: "Created using the release-cli $EXTRA_DESCRIPTION"
+#   tag_name: "$TAG"
+#   ref: "$CI_COMMIT_SHA"
+#   assets:
+#     links:
+#       - name: "{$GENERIC_WAR}"
+#         url: "${PACKAGE_REGISTRY_URL}"
+#         filepath: "/${GENERIC_WAR}"
+
+deploy-staging:
+  stage: deploy
+  image: registry.endatamweel.tn/alpine-ssh:1.0
+  needs:
+    - job: build-application
+      artifacts: true
+  before_script:
+    - "command -v ssh-agent >/dev/null || ( apk update && apk add openssh-client )"
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan $SERVER >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+  script:
+    - ssh root@${SERVER} mkdir -p /usr/share/nginx/html/endacashweb/images
+    - scp -r ./target/*.war root@${SERVER}:/opt/tomcat/webapps/
+    - ssh root@${SERVER} systemctl restart tomcat.service
+  environment:
+    name: staging
+    url: https://endacash-dev.endatamweel.tn:9090/endaCash-0.1/
+  only:
+    - dev
+  when: always
+
+deploy-production:
+  stage: deploy
+  image: registry.endatamweel.tn/alpine-ssh:1.0
+  before_script:
+    - "command -v ssh-agent >/dev/null || ( apk update && apk add openssh-client )"
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan $SERVER >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+  script:
+    - scp -r target/*.war root@${SERVER}:/opt/tomcat/webapps/
+    - ssh root@${SERVER} systemctl restart tomcat.service
+  environment:
+    name: production
+    url: https://endarh.endatamweel.tn:9090/CongeRH-V7/conges/all
+  only:
+    - main
+  when: manual

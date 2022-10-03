@@ -1,0 +1,61 @@
+init project (add dependencies)
+config DB
+config swagger
+ApiExceptionsHandler
+    ApiBaseException
+    ResponseEntityExceptionHandler
+    ConflictException
+    DuplicateEntryException
+    FileStorageException
+    FileNotFoundException
+    NotFoundException
+----------------------------------
+user module
+ config contexte securite
+ config CORS
+ register
+ Contraintes d'intégrité BD
+
+    .creation des Entity user & role ...
+    .test User-Name Existe
+    .test E-mail Existe
+ login
+    cree JWTAauthentficationFilter
+    cree JWTAuthorrizationFilter
+    cree jwt
+creation endpoint api
+    add role to user
+    get all user
+    Update user
+    Update Password user
+    Reset Pssword User
+    Reset Pssword Pin
+    register
+    List Role
+    List AP
+
+Banques Resource
+creation endpoint api
+    Add Banque
+    Delete Banque By Id
+    Get List Banque
+
+Agence  Resource
+creation endpoint api
+    Add Agence
+    Delete Agence By Id
+    Get List Agence
+
+Versements
+Contraintes d'intégrité BD
+    cree versement
+       test code Pin User
+       insert Versement T24 (asynchrone)
+       send Sms Versement
+       save Versement data base endaCash
+        uplode image (cree entity)
+creation endpoint api Versements
+
+ Historique des Versements par AP
+ Update Statut Versements
+ filtre les Versements par AP et date Versement  (Back Office)
